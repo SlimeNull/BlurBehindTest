@@ -10,6 +10,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Xml.Linq;
+using BlurBehindTest.Internals;
 
 namespace BlurBehindTest
 {
@@ -45,18 +46,13 @@ namespace BlurBehindTest
             _onRenderMethod.Invoke(target, drawingContext);
         }
 
-        private static void EnsureRendered(UIElement target)
-        {
-            if (_drawingContentOfUIElement.GetValue(target) is null)
-            {
-                ForceRender(target);
-            }
-        }
-
-        private void DrawUIElement(DrawingContext drawingContext, UIElement element, Point relatedXY, Size size)
+        private void DrawVisual(DrawingContext drawingContext, Visual visual, Point relatedXY, Size size)
         {
             drawingContext.DrawRectangle(
-                new VisualBrush(element), null,
+                new VisualBrush(visual)
+                {
+                    AutoLayoutContent = false,
+                }, null,
                 new Rect(relatedXY.X, relatedXY.Y, size.Width, size.Height));
         }
 
@@ -64,7 +60,7 @@ namespace BlurBehindTest
         {
             var relatedXY = element.TranslatePoint(default, this);
 
-            DrawUIElement(drawingContext, element, relatedXY, element.RenderSize);
+            DrawVisual(drawingContext, element, relatedXY, element.RenderSize);
         }
 
         protected override Geometry GetLayoutClip(Size layoutSlotSize)
@@ -75,6 +71,11 @@ namespace BlurBehindTest
         protected override void ParentLayoutInvalidated(UIElement child)
         {
             base.ParentLayoutInvalidated(child);
+        }
+
+        protected override HitTestResult HitTestCore(PointHitTestParameters hitTestParameters)
+        {
+            return new PointHitTestResult(this, hitTestParameters.HitPoint);
         }
 
         protected override void OnVisualParentChanged(DependencyObject oldParentObject)
@@ -119,12 +120,17 @@ namespace BlurBehindTest
 
             while (_parentStack.TryPop(out var current))
             {
-                EnsureRendered(current.Parent);
+                var parentRelatedXY = current.Parent.TranslatePoint(default, this);
 
                 if (_drawingContentOfUIElement.GetValue(current.Parent) is { } parentDrawingContent)
                 {
-                    var renderDataPresenter = new RenderDataPresenter(current.Parent.RenderSize, parentDrawingContent);
-                    DrawUIElement(drawingContext, renderDataPresenter, current.Parent.TranslatePoint(default, this), current.Parent.RenderSize);
+                    var drawingVisual = new DrawingVisual();
+                    var drawingVisualRenderContext = drawingVisual.RenderOpen();
+
+                    _onRenderMethod.Invoke(current.Parent, drawingVisualRenderContext);
+                    drawingVisualRenderContext.Close();
+
+                    DrawVisual(drawingContext, drawingVisual, parentRelatedXY, current.Parent.RenderSize);
                 }
 
                 if (current.Parent is Panel parentPanelToRender)
@@ -147,20 +153,6 @@ namespace BlurBehindTest
             _currentRenderData = _renderDataOfVisualDrawingContext.GetValue(drawingContext);
         }
 
-
-
-        private int RenderVersion
-        {
-            get { return (int)GetValue(RenderVersionPropertyKey.DependencyProperty); }
-            set { SetValue(RenderVersionPropertyKey, value); }
-        }
-
-        // Using a DependencyProperty as the backing store for Version.  This enables animation, styling, binding, etc...
-        private static readonly DependencyPropertyKey RenderVersionPropertyKey =
-            DependencyProperty.RegisterReadOnly("RenderVersion", typeof(int), typeof(BackgroundPresenter), new FrameworkPropertyMetadata(0, FrameworkPropertyMetadataOptions.AffectsRender));
-
-
-
         private class RenderDataPresenter : UIElement
         {
             private static readonly Type _typeRenderDataDrawingContext = typeof(DrawingContext).Assembly
@@ -168,14 +160,6 @@ namespace BlurBehindTest
 
             private static readonly FieldInfo _renderDataOfVisualDrawingContext = _typeRenderDataDrawingContext
                 .GetField("_renderData", BindingFlags.Instance | BindingFlags.NonPublic)!;
-
-            private static readonly Func<UIElement, DrawingContext> _renderOpenMethod = typeof(UIElement)
-                .GetMethod("RenderOpen", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .CreateDelegate<Func<UIElement, DrawingContext>>();
-
-            private static readonly Action<UIElement, DrawingContext> _onRenderMethod = typeof(UIElement)
-                .GetMethod("OnRender", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .CreateDelegate<Action<UIElement, DrawingContext>>();
 
 
             private readonly Size _size;
@@ -194,12 +178,7 @@ namespace BlurBehindTest
 
             protected override void OnRender(DrawingContext drawingContext)
             {
-                ReplaceRenderData(drawingContext, _renderData);
-            }
-
-            private static void ReplaceRenderData(DrawingContext renderDataDrawingContext, object? renderData)
-            {
-                _renderDataOfVisualDrawingContext.SetValue(renderDataDrawingContext, renderData);
+                _renderDataOfVisualDrawingContext.SetValue(drawingContext, _renderData);
             }
         }
     }

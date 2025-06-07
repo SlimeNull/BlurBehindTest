@@ -51,5 +51,13 @@ namespace BlurBehindTest
         {
             blurArea.ReleaseMouseCapture();
         }
+
+        private void Window_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Right)
+            {
+                Canvas.SetLeft(blurArea, Canvas.GetLeft(blurArea) + 10);
+            }
+        }
     }
 }
