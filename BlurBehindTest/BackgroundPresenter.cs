@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -16,14 +18,11 @@ namespace BlurBehindTest
 {
     public class BackgroundPresenter : FrameworkElement
     {
-        private static readonly Type _typeRenderDataDrawingContext = typeof(DrawingContext).Assembly
-            .GetType("System.Windows.Media.RenderDataDrawingContext", true)!;
-
         private static readonly FieldInfo _drawingContentOfUIElement = typeof(UIElement)
             .GetField("_drawingContent", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
-        private static readonly FieldInfo _renderDataOfVisualDrawingContext = _typeRenderDataDrawingContext
-            .GetField("_renderData", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        private static readonly FieldInfo _contentOfDrawingVisual = typeof(DrawingVisual)
+            .GetField("_content", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
         private static readonly Func<UIElement, DrawingContext> _renderOpenMethod = typeof(UIElement)
             .GetMethod("RenderOpen", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -64,16 +63,6 @@ namespace BlurBehindTest
             return new RectangleGeometry(new Rect(0, 0, ActualWidth, ActualHeight));
         }
 
-        protected override void ParentLayoutInvalidated(UIElement child)
-        {
-            base.ParentLayoutInvalidated(child);
-        }
-
-        protected override HitTestResult HitTestCore(PointHitTestParameters hitTestParameters)
-        {
-            return new PointHitTestResult(this, hitTestParameters.HitPoint);
-        }
-
         protected override void OnVisualParentChanged(DependencyObject oldParentObject)
         {
             if (oldParentObject is UIElement oldParent)
@@ -92,15 +81,24 @@ namespace BlurBehindTest
             // cannot use 'InvalidateVisual' here, because it will cause infinite loop
 
             ForceRender(this);
+
+            Debug.WriteLine("Parent layout updated, forcing render of BackgroundPresenter.");
         }
 
         private static void DrawBackground(
-            DrawingContext drawingContext, UIElement self, 
-            Stack<UIElement> parentStackStorage, 
+            DrawingContext drawingContext, UIElement self,
+            Stack<UIElement> parentStackStorage,
+            int maxDepth,
             bool throwExceptionIfParentArranging)
         {
+#if DEBUG
+            bool selfInDesignMode = DesignerProperties.GetIsInDesignMode(self);
+#endif
+
             var parent = VisualTreeHelper.GetParent(self) as UIElement;
-            while (parent is { })
+            while (
+                parent is { } &&
+                parentStackStorage.Count < maxDepth)
             {
                 // parent not visible, no need to render
                 if (!parent.IsVisible)
@@ -108,6 +106,15 @@ namespace BlurBehindTest
                     parentStackStorage.Clear();
                     return;
                 }
+
+#if DEBUG
+                if (selfInDesignMode &&
+                    parent.GetType().ToString().Contains("VisualStudio"))
+                {
+                    // 遍历到 VS 自身的设计器元素, 中断!
+                    break;
+                }
+#endif
 
                 // is parent arranging
                 // we cannot render it
@@ -127,10 +134,10 @@ namespace BlurBehindTest
                 }
 
                 parentStackStorage.Push(parent);
-
                 parent = VisualTreeHelper.GetParent(parent) as UIElement;
             }
 
+            var selfRect = new Rect(0, 0, self.RenderSize.Width, self.RenderSize.Height);
             while (parentStackStorage.TryPop(out var currentParent))
             {
                 if (!parentStackStorage.TryPeek(out var breakElement))
@@ -144,9 +151,7 @@ namespace BlurBehindTest
                 if (_drawingContentOfUIElement.GetValue(currentParent) is { } parentDrawingContent)
                 {
                     var drawingVisual = new DrawingVisual();
-                    var drawingVisualRenderContext = drawingVisual.RenderOpen();
-                    _renderDataOfVisualDrawingContext.SetValue(drawingVisualRenderContext, parentDrawingContent);
-                    drawingVisualRenderContext.Close();
+                    _contentOfDrawingVisual.SetValue(drawingVisual, parentDrawingContent);
 
                     DrawVisual(drawingContext, drawingVisual, parentRelatedXY, currentParent.RenderSize);
                 }
@@ -158,6 +163,14 @@ namespace BlurBehindTest
                         if (child == breakElement)
                         {
                             break;
+                        }
+
+                        var childRelatedXY = child.TranslatePoint(default, self);
+                        var childRect = new Rect(childRelatedXY, child.RenderSize);
+
+                        if (!selfRect.IntersectsWith(childRect))
+                        {
+                            continue; // skip if not intersecting
                         }
 
                         if (child.IsVisible)
@@ -172,12 +185,21 @@ namespace BlurBehindTest
         public static void DrawBackground(DrawingContext drawingContext, UIElement self)
         {
             var parentStack = new Stack<UIElement>();
-            DrawBackground(drawingContext, self, parentStack, true);
+            DrawBackground(drawingContext, self, parentStack, int.MaxValue, true);
         }
 
         protected override void OnRender(DrawingContext drawingContext)
         {
-            DrawBackground(drawingContext, this, _parentStack, false);
+            DrawBackground(drawingContext, this, _parentStack, MaxDepth, false);
         }
+
+        public int MaxDepth
+        {
+            get { return (int)GetValue(MaxDepthProperty); }
+            set { SetValue(MaxDepthProperty, value); }
+        }
+
+        public static readonly DependencyProperty MaxDepthProperty =
+            DependencyProperty.Register("MaxDepth", typeof(int), typeof(BackgroundPresenter), new PropertyMetadata(64));
     }
 }

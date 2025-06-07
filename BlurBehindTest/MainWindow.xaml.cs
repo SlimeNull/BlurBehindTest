@@ -26,6 +26,11 @@ namespace BlurBehindTest
 
         private void SiblingPresenter_MouseDown(object sender, MouseButtonEventArgs e)
         {
+            if (sender is not UIElement blurArea)
+            {
+                return;
+            }
+
             blurArea.CaptureMouse();
 
             if (blurArea.IsMouseCaptured)
@@ -37,6 +42,11 @@ namespace BlurBehindTest
 
         private void SiblingPresenter_MouseMove(object sender, MouseEventArgs e)
         {
+            if (sender is not UIElement blurArea)
+            {
+                return;
+            }
+
             if (blurArea.IsMouseCaptured)
             {
                 var nowPosition = Mouse.GetPosition(null);
@@ -49,15 +59,12 @@ namespace BlurBehindTest
 
         private void SiblingPresenter_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            blurArea.ReleaseMouseCapture();
-        }
-
-        private void Window_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Right)
+            if (sender is not UIElement blurArea)
             {
-                Canvas.SetLeft(blurArea, Canvas.GetLeft(blurArea) + 10);
+                return;
             }
+
+            blurArea.ReleaseMouseCapture();
         }
     }
 }
