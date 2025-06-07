@@ -9,14 +9,14 @@
         KeyDown="Window_KeyDown">
     <Border>
         <Border.Background>
-            <ImageBrush ImageSource="C:\Users\SlimeNull\OneDrive\Pictures\Desktop\0c0f3f16880511ebb6edd017c2d2eca2.jpg"
+            <ImageBrush ImageSource="/Assets/background.jpg"
                         Stretch="Uniform"/>
         </Border.Background>
         <Grid>
             <TabControl Width="200"
                         Height="300">
                 <TabItem Header="QWQ">
-                    <StackPanel Background="Red">
+                    <StackPanel Background="Pink">
                         <TextBlock TextWrapping="Wrap" Margin="8">
                             Hendrerit est labore duis duis amet duo et lorem duis et labore magna et diam diam feugait clita euismod invidunt lorem at clita ut eu option takimata sit diam veniam clita facilisis clita consectetuer consequat ut labore sed dolor erat sit clita duo accusam feugait commodo sit sed sadipscing tempor erat ut kasd et tempor volutpat tempor et et stet tation dolores gubergren diam ea consetetur eu ut tempor nonumy in feugiat assum sea duo eirmod sea sed tation diam nisl kasd eros justo elitr facilisis ea ipsum id et tincidunt ut amet eu ea et sit sed consequat veniam
                         </TextBlock>

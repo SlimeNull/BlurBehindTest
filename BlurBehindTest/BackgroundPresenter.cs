@@ -33,11 +33,7 @@ namespace BlurBehindTest
             .GetMethod("OnRender", BindingFlags.Instance | BindingFlags.NonPublic)!
             .CreateDelegate<Action<UIElement, DrawingContext>>();
 
-        private record struct ParentAndBreakElement(UIElement Parent, UIElement BreakElement);
-
-        private readonly Stack<ParentAndBreakElement> _parentStack = new();
-
-        private object? _currentRenderData = null;
+        private readonly Stack<UIElement> _parentStack = new();
 
         private static void ForceRender(UIElement target)
         {
@@ -46,7 +42,7 @@ namespace BlurBehindTest
             _onRenderMethod.Invoke(target, drawingContext);
         }
 
-        private void DrawVisual(DrawingContext drawingContext, Visual visual, Point relatedXY, Size size)
+        private static void DrawVisual(DrawingContext drawingContext, Visual visual, Point relatedXY, Size size)
         {
             drawingContext.DrawRectangle(
                 new VisualBrush(visual)
@@ -56,9 +52,9 @@ namespace BlurBehindTest
                 new Rect(relatedXY.X, relatedXY.Y, size.Width, size.Height));
         }
 
-        private void DrawUIElement(DrawingContext drawingContext, UIElement element)
+        private static void DrawUIElement(DrawingContext drawingContext, UIElement self, UIElement element)
         {
-            var relatedXY = element.TranslatePoint(default, this);
+            var relatedXY = element.TranslatePoint(default, self);
 
             DrawVisual(drawingContext, element, relatedXY, element.RenderSize);
         }
@@ -93,93 +89,95 @@ namespace BlurBehindTest
 
         private void ParentLayoutUpdated(object? sender, EventArgs e)
         {
+            // cannot use 'InvalidateVisual' here, because it will cause infinite loop
+
             ForceRender(this);
         }
 
-        protected override void OnRender(DrawingContext drawingContext)
+        private static void DrawBackground(
+            DrawingContext drawingContext, UIElement self, 
+            Stack<UIElement> parentStackStorage, 
+            bool throwExceptionIfParentArranging)
         {
-            var parent = Parent as UIElement;
-            var breakElement = this as UIElement;
+            var parent = VisualTreeHelper.GetParent(self) as UIElement;
             while (parent is { })
             {
-                // is parent arranging
-                if (parent.RenderSize.Width == 0 ||
-                    parent.RenderSize.Height == 0)
+                // parent not visible, no need to render
+                if (!parent.IsVisible)
                 {
-                    _parentStack.Clear();
-                    _renderDataOfVisualDrawingContext.SetValue(drawingContext, _currentRenderData);
-                    InvalidateArrange();
+                    parentStackStorage.Clear();
                     return;
                 }
 
-                _parentStack.Push(new ParentAndBreakElement(parent, breakElement));
+                // is parent arranging
+                // we cannot render it
+                if (parent.RenderSize.Width == 0 ||
+                    parent.RenderSize.Height == 0)
+                {
+                    parentStackStorage.Clear();
 
-                breakElement = parent;
+                    if (throwExceptionIfParentArranging)
+                    {
+                        throw new InvalidOperationException("Arranging");
+                    }
+
+                    // render after parent arranging finished
+                    self.InvalidateArrange();
+                    return;
+                }
+
+                parentStackStorage.Push(parent);
+
                 parent = VisualTreeHelper.GetParent(parent) as UIElement;
             }
 
-            while (_parentStack.TryPop(out var current))
+            while (parentStackStorage.TryPop(out var currentParent))
             {
-                var parentRelatedXY = current.Parent.TranslatePoint(default, this);
+                if (!parentStackStorage.TryPeek(out var breakElement))
+                {
+                    breakElement = self;
+                }
 
-                if (_drawingContentOfUIElement.GetValue(current.Parent) is { } parentDrawingContent)
+                var parentRelatedXY = currentParent.TranslatePoint(default, self);
+
+                // has render data
+                if (_drawingContentOfUIElement.GetValue(currentParent) is { } parentDrawingContent)
                 {
                     var drawingVisual = new DrawingVisual();
                     var drawingVisualRenderContext = drawingVisual.RenderOpen();
-
-                    _onRenderMethod.Invoke(current.Parent, drawingVisualRenderContext);
+                    _renderDataOfVisualDrawingContext.SetValue(drawingVisualRenderContext, parentDrawingContent);
                     drawingVisualRenderContext.Close();
 
-                    DrawVisual(drawingContext, drawingVisual, parentRelatedXY, current.Parent.RenderSize);
+                    DrawVisual(drawingContext, drawingVisual, parentRelatedXY, currentParent.RenderSize);
                 }
 
-                if (current.Parent is Panel parentPanelToRender)
+                if (currentParent is Panel parentPanelToRender)
                 {
                     foreach (UIElement child in parentPanelToRender.Children)
                     {
-                        if (child == current.BreakElement)
+                        if (child == breakElement)
                         {
                             break;
                         }
 
-                        if (child != this && child.Visibility == Visibility.Visible)
+                        if (child.IsVisible)
                         {
-                            DrawUIElement(drawingContext, child);
+                            DrawUIElement(drawingContext, self, child);
                         }
                     }
                 }
             }
-
-            _currentRenderData = _renderDataOfVisualDrawingContext.GetValue(drawingContext);
         }
 
-        private class RenderDataPresenter : UIElement
+        public static void DrawBackground(DrawingContext drawingContext, UIElement self)
         {
-            private static readonly Type _typeRenderDataDrawingContext = typeof(DrawingContext).Assembly
-                .GetType("System.Windows.Media.RenderDataDrawingContext", true)!;
+            var parentStack = new Stack<UIElement>();
+            DrawBackground(drawingContext, self, parentStack, true);
+        }
 
-            private static readonly FieldInfo _renderDataOfVisualDrawingContext = _typeRenderDataDrawingContext
-                .GetField("_renderData", BindingFlags.Instance | BindingFlags.NonPublic)!;
-
-
-            private readonly Size _size;
-            private readonly object _renderData;
-
-            public RenderDataPresenter(Size size, object renderData)
-            {
-                _size = size;
-                _renderData = renderData;
-            }
-
-            protected override Size MeasureCore(Size availableSize)
-            {
-                return _size;
-            }
-
-            protected override void OnRender(DrawingContext drawingContext)
-            {
-                _renderDataOfVisualDrawingContext.SetValue(drawingContext, _renderData);
-            }
+        protected override void OnRender(DrawingContext drawingContext)
+        {
+            DrawBackground(drawingContext, this, _parentStack, false);
         }
     }
 }
